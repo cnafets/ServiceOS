@@ -1,0 +1,59 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+.env
+*.db
+*.sqlite
+htmlcov/
+.coverage
+dist/
+build/
+*.egg-info/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Environment Variables
+.env
+.env.*
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Database
+*.db
+*.sqlite3
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Python cache
+.mypy_cache/
+.ruff_cache/
+
+# Misc
+*.tmp

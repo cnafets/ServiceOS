@@ -1,0 +1,26 @@
+services:
+  api:
+    build: .
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgresql+psycopg://ynm:ynm@db:5432/ynm_automation
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ynm_automation
+      POSTGRES_USER: ynm
+      POSTGRES_PASSWORD: ynm
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
+
