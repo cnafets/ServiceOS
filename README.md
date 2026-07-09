@@ -211,13 +211,13 @@ curl.exe -s "$base/api/v1/appointments"
 | `APP_ENV` | Environment label such as `local`, `staging`, or `production`. |
 | `LOG_LEVEL` | Python logging level. |
 | `DATABASE_URL` | SQLAlchemy connection string. Defaults to local SQLite. |
-| `SHOPWARE_BASE_URL` | Shop-Ware API base URL. Missing until docs are provided. |
+| `SHOPWARE_BASE_URL` | Shop-Ware API base URL. Defaults to `https://api.shop-ware.com`. |
 | `SHOPWARE_MODE` | `mock` for local development or `live` for real Shop-Ware API calls. |
-| `SHOPWARE_API_TOKEN` | Bearer token if Shop-Ware uses token auth. |
-| `SHOPWARE_AUTH_HEADER_NAME` | Header used for token auth. Defaults to `Authorization`. |
-| `SHOPWARE_AUTH_SCHEME` | Auth scheme prefix. Defaults to `Bearer`; leave blank if the token should be sent directly. |
-| `SHOPWARE_CLIENT_ID` | Client ID if Shop-Ware uses OAuth/client credentials. |
-| `SHOPWARE_CLIENT_SECRET` | Client secret if Shop-Ware uses OAuth/client credentials. |
+| `SHOPWARE_API_PARTNER_ID` | Sent as official `X-Api-Partner-Id` header. |
+| `SHOPWARE_API_SECRET` | Sent as official `X-Api-Secret` header. |
+| `SHOPWARE_TENANT_ID` | Tenant ID for tenant-scoped API paths. |
+| `SHOPWARE_DEFAULT_SHOP_ID` | Required to create appointments because Shop-Ware requires `shop_id`. |
+| `SHOPWARE_DEFAULT_STAFF_ID` | Optional technician/staff assignment for synced appointments. |
 | `SHOPWARE_TIMEOUT_SECONDS` | HTTP timeout for Shop-Ware calls. |
 | `SHOPWARE_RETRY_ATTEMPTS` | Number of API request attempts before marking sync pending. |
 | `SHOPWARE_RETRY_BACKOFF_SECONDS` | Base delay between retry attempts. |
@@ -289,15 +289,61 @@ Live mode is enabled with:
 
 ```env
 SHOPWARE_MODE=live
-SHOPWARE_BASE_URL=https://example.shop-ware-api.test
-SHOPWARE_API_TOKEN=replace-me
-SHOPWARE_APPOINTMENT_CREATE_PATH=/replace/with/official/create/path
-SHOPWARE_APPOINTMENT_UPDATE_PATH=/replace/with/official/update/path/{appointment_id}
-SHOPWARE_APPOINTMENT_CANCEL_PATH=/replace/with/official/cancel/path/{appointment_id}
+SHOPWARE_BASE_URL=https://api.shop-ware.com
+SHOPWARE_API_PARTNER_ID=replace-me
+SHOPWARE_API_SECRET=replace-me
+SHOPWARE_TENANT_ID=replace-me
+SHOPWARE_DEFAULT_SHOP_ID=replace-me
+SHOPWARE_DEFAULT_STAFF_ID=
+SHOPWARE_APPOINTMENT_CREATE_PATH=/api/v1/tenants/{tenant_id}/appointments
+SHOPWARE_APPOINTMENT_UPDATE_PATH=/api/v1/tenants/{tenant_id}/appointments/{appointment_id}
+SHOPWARE_APPOINTMENT_CANCEL_PATH=/api/v1/tenants/{tenant_id}/appointments/{appointment_id}
 SHOPWARE_APPOINTMENT_ID_FIELD=id
 ```
 
-The endpoint paths above are placeholders by design. Replace them only after official Shop-Ware API documentation confirms the paths and payload shape.
+The official API uses header authentication:
+
+- `X-Api-Partner-Id`
+- `X-Api-Secret`
+
+There is no separate OAuth/token authentication endpoint in the OpenAPI file provided.
+
+Official endpoints used or prepared:
+
+| Entity | Methods | Path |
+| --- | --- | --- |
+| Authorizations | `GET` | `/api/v1/partners/{partner_id}/authorizations` |
+| Tenants | `GET` | `/api/v1/tenants`, `/api/v1/tenants/{id}` |
+| Appointments | `GET`, `POST` | `/api/v1/tenants/{tenant_id}/appointments` |
+| Appointments | `GET`, `PUT`, `DELETE` | `/api/v1/tenants/{tenant_id}/appointments/{id}` |
+| Customers | `GET`, `POST` | `/api/v1/tenants/{tenant_id}/customers` |
+| Customers | `GET`, `PUT` | `/api/v1/tenants/{tenant_id}/customers/{id}` |
+| Vehicles | `GET`, `POST` | `/api/v1/tenants/{tenant_id}/vehicles` |
+| Vehicles | `GET`, `PUT` | `/api/v1/tenants/{tenant_id}/vehicles/{id}` |
+| Repair Orders | `GET`, `POST` | `/api/v1/tenants/{tenant_id}/repair_orders` |
+| Repair Orders | `GET`, `PUT` | `/api/v1/tenants/{tenant_id}/repair_orders/{id}` |
+| Repair Order Actions | `POST` | `/api/v1/tenants/{tenant_id}/repair_orders/{id}/start`, `/api/v1/tenants/{tenant_id}/repair_orders/{id}/share` |
+| Recommendations | `GET`, `POST` | `/api/v1/tenants/{tenant_id}/recommendations` |
+| Recommendations | `GET`, `PUT` | `/api/v1/tenants/{tenant_id}/recommendations/{id}` |
+| Past Recommendations | `GET` | `/api/v1/tenants/{tenant_id}/past_recommendations`, `/api/v1/tenants/{tenant_id}/past_recommendations/{id}` |
+| Webhooks | `GET`, `POST` | `/api/v1/webhooks` |
+| Webhooks | `GET`, `PUT`, `DELETE` | `/api/v1/webhooks/{id}` |
+
+Documented appointment payload fields:
+
+```json
+{
+  "shop_id": 1,
+  "staff_id": 2,
+  "repair_order_id": 1,
+  "title": "My Appointment Title",
+  "description": "My Appointment Description",
+  "start_at": "2026-03-10T11:19:19Z",
+  "end_at": "2026-03-11T07:59:59Z"
+}
+```
+
+`shop_id` and `start_at` are required by Shop-Ware. The docs also note that either `repair_order_id` or `title` must be set. The adapter maps local appointment data into `title`, `description`, `start_at`, and `end_at`, and uses `SHOPWARE_DEFAULT_SHOP_ID` plus optional `SHOPWARE_DEFAULT_STAFF_ID`.
 
 If Shop-Ware synchronization fails, the local appointment is still saved. The API response includes:
 
@@ -330,18 +376,19 @@ pytest
 
 Current tests cover local appointment persistence, double-booking prevention, and cancellation freeing a time slot.
 
-## Missing Shop-Ware Details
+## Shop-Ware API Limitations and Blockers
 
-Phase 2 needs:
+Known blockers for full scheduling integration:
 
-- Official base URL and environment strategy.
-- Authentication method: bearer token, OAuth, API key, or something else.
-- Appointment create/update/cancel endpoint paths.
-- Required appointment payload fields and response shape.
-- Customer, vehicle, and repair order search endpoint support.
-- Error format, rate limits, pagination, and webhook availability.
-
-Until those details are provided, the Shop-Ware client stores appointments locally and logs that remote calls are skipped.
+- The API creates appointments against a `shop_id`, but Your New Mechanic is mobile. We need a production convention for which Shop-Ware shop represents mobile work.
+- Appointment records do not directly include customer, vehicle, address, travel time, route, or required tool fields. Those must remain local metadata or be connected through repair orders.
+- Appointment creation does not automatically update `repair_order.due_in_at` or `repair_order.due_out_at`, according to the docs.
+- The public docs do not expose a dedicated availability/free-busy endpoint, so double-booking prevention remains local unless Shop-Ware calendar conflicts must be fetched and reconciled.
+- Customer search is filter-based (`last_name`, `email`, `phone_number`), not a single full-text query.
+- Vehicle search is VIN/customer-id based. Make/model search is not documented.
+- Repair order search supports filters like `number`, `customer_id`, `vehicle_id`, `status`, and `shop_id`, not broad text search.
+- Webhooks are available for object/action events such as `appointment.created`, `appointment.updated`, and `appointment.deleted`, but webhook signature verification details were not present in the extracted endpoint summary.
+- The OpenAPI file does not document rate limits.
 
 ## Extension Points
 

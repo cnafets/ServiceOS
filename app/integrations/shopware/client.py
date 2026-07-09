@@ -13,18 +13,20 @@ logger = logging.getLogger(__name__)
 class ShopWareClient:
     """Reusable Shop-Ware HTTP client for all entity adapters."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, transport: httpx.BaseTransport | None = None) -> None:
         self.settings = settings
+        self.transport = transport
 
     def _headers(self) -> dict[str, str]:
-        if not self.settings.shopware_api_token:
-            raise ExternalServiceNotConfiguredError("SHOPWARE_API_TOKEN is required for Shop-Ware API calls.")
-        token_value = (
-            f"{self.settings.shopware_auth_scheme} {self.settings.shopware_api_token}"
-            if self.settings.shopware_auth_scheme
-            else self.settings.shopware_api_token
-        )
-        return {self.settings.shopware_auth_header_name: token_value, "Content-Type": "application/json"}
+        if not self.settings.shopware_api_partner_id or not self.settings.shopware_api_secret:
+            raise ExternalServiceNotConfiguredError(
+                "SHOPWARE_API_PARTNER_ID and SHOPWARE_API_SECRET are required for live Shop-Ware API calls."
+            )
+        return {
+            "X-Api-Partner-Id": self.settings.shopware_api_partner_id,
+            "X-Api-Secret": self.settings.shopware_api_secret,
+            "Content-Type": "application/json",
+        }
 
     def _client(self) -> httpx.Client:
         if not self.settings.shopware_base_url:
@@ -33,6 +35,7 @@ class ShopWareClient:
             base_url=self.settings.shopware_base_url,
             timeout=self.settings.shopware_timeout_seconds,
             headers=self._headers(),
+            transport=self.transport,
         )
 
     def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
@@ -71,4 +74,11 @@ class ShopWareClient:
                 if attempt < attempts:
                     time.sleep(self.settings.shopware_retry_backoff_seconds * attempt)
 
-        raise ExternalServiceError(f"Shop-Ware API request failed after {attempts} attempt(s): {last_error}")
+        raise ExternalServiceError(f"Shop-Ware API request failed after {attempts} attempt(s): {self._format_error(last_error)}")
+
+    def _format_error(self, error: Exception | None) -> str:
+        if isinstance(error, httpx.HTTPStatusError):
+            response = error.response
+            body = response.text[:1000] if response.text else ""
+            return f"HTTP {response.status_code} {response.reason_phrase}: {body}"
+        return str(error)
