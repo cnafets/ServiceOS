@@ -5,9 +5,12 @@ from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import SchedulingConflictError
+from app.core.logging import get_logger
 from app.integrations.shopware.adapter import ShopWareAppointmentAdapter, ShopWareSyncResult
 from app.models.appointment import Appointment, AppointmentStatus, SyncStatus
 from app.schemas.appointment import AppointmentCreate, AppointmentUpdate
+
+logger = get_logger(__name__)
 
 
 class AppointmentService:
@@ -16,6 +19,7 @@ class AppointmentService:
         self.shopware_adapter = shopware_adapter
 
     def create(self, data: AppointmentCreate) -> Appointment:
+        logger.info("Appointment Create Started")
         self._ensure_available(data.start_time, data.end_time)
         appointment = Appointment(
             **data.model_dump(),
@@ -28,11 +32,17 @@ class AppointmentService:
         self._apply_sync_result(appointment, result)
         self.db.commit()
         self.db.refresh(appointment)
+        logger.info(
+            "Appointment Create Completed",
+            extra={"appointment_id": appointment.id, "sync_status": appointment.sync_status.value},
+        )
         return appointment
 
     def update(self, appointment_id: int, data: AppointmentUpdate) -> Appointment | None:
+        logger.info("Appointment Update Started", extra={"appointment_id": appointment_id})
         appointment = self.get(appointment_id)
         if appointment is None:
+            logger.info("Appointment Update Not Found", extra={"appointment_id": appointment_id})
             return None
 
         updates = data.model_dump(exclude_unset=True)
@@ -51,11 +61,17 @@ class AppointmentService:
 
         self.db.commit()
         self.db.refresh(appointment)
+        logger.info(
+            "Appointment Update Completed",
+            extra={"appointment_id": appointment.id, "sync_status": appointment.sync_status.value},
+        )
         return appointment
 
     def cancel(self, appointment_id: int) -> Appointment | None:
+        logger.info("Appointment Cancel Started", extra={"appointment_id": appointment_id})
         appointment = self.get(appointment_id)
         if appointment is None:
+            logger.info("Appointment Cancel Not Found", extra={"appointment_id": appointment_id})
             return None
 
         appointment.status = AppointmentStatus.CANCELLED
@@ -64,17 +80,27 @@ class AppointmentService:
 
         self.db.commit()
         self.db.refresh(appointment)
+        logger.info(
+            "Appointment Cancel Completed",
+            extra={"appointment_id": appointment.id, "sync_status": appointment.sync_status.value},
+        )
         return appointment
 
     def retry_sync(self, appointment_id: int) -> Appointment | None:
+        logger.info("Appointment Sync Retry Started", extra={"appointment_id": appointment_id})
         appointment = self.get(appointment_id)
         if appointment is None:
+            logger.info("Appointment Sync Retry Not Found", extra={"appointment_id": appointment_id})
             return None
 
         result = self._sync_existing_appointment(appointment, self._to_shopware_payload(self._appointment_payload(appointment)))
         self._apply_sync_result(appointment, result)
         self.db.commit()
         self.db.refresh(appointment)
+        logger.info(
+            "Appointment Sync Retry Completed",
+            extra={"appointment_id": appointment.id, "sync_status": appointment.sync_status.value},
+        )
         return appointment
 
     def get(self, appointment_id: int) -> Appointment | None:

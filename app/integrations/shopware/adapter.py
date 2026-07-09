@@ -1,13 +1,23 @@
-import logging
 from dataclasses import dataclass
 from typing import Any
 
 from app.core.config import Settings
 from app.core.exceptions import ExternalServiceNotConfiguredError
+from app.core.logging import get_logger
+from app.core.time import rfc3339_datetime_value
 from app.integrations.shopware.client import ShopWareClient
-from app.schemas.shopware import ShopWareAppointmentCreate, ShopWareAppointmentUpdate
+from app.schemas.shopware import (
+    ShopWareAppointmentCreate,
+    ShopWareAppointmentUpdate,
+    ShopWareCustomerCreate,
+    ShopWareCustomerUpdate,
+    ShopWareRepairOrderCreate,
+    ShopWareRepairOrderUpdate,
+    ShopWareVehicleCreate,
+    ShopWareVehicleUpdate,
+)
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -45,6 +55,12 @@ class ShopWareAppointmentAdapter:
         path = self._format_path(self.settings.shopware_appointment_cancel_path, appointment_id=remote_id)
         return self._send("DELETE", path, fallback_remote_id=remote_id)
 
+    def retrieve(self, remote_id: str) -> dict[str, Any]:
+        if self._is_mock_mode:
+            return {"id": remote_id, "mode": "mock"}
+        path = self._format_path(self.settings.shopware_appointment_update_path, appointment_id=remote_id)
+        return self.client.request("GET", path)
+
     def search_customers(self, query: str) -> dict[str, Any]:
         return self._search(self.settings.shopware_customer_search_path, query)
 
@@ -56,7 +72,7 @@ class ShopWareAppointmentAdapter:
 
     @property
     def _is_mock_mode(self) -> bool:
-        return self.settings.shopware_mode.lower() == "mock"
+        return self.settings.integration_test_mode
 
     def _send(
         self,
@@ -118,8 +134,8 @@ class ShopWareAppointmentAdapter:
             staff_id=self.settings.shopware_default_staff_id,
             title=self._title(payload),
             description=self._description(payload),
-            start_at=payload["start_time"],
-            end_at=payload.get("end_time"),
+            start_at=self._rfc3339(payload["start_time"]),
+            end_at=self._rfc3339(payload.get("end_time")),
             repair_order_id=payload.get("repair_order_id"),
         )
         return data.model_dump(mode="json", exclude_none=True)
@@ -130,11 +146,14 @@ class ShopWareAppointmentAdapter:
             staff_id=self.settings.shopware_default_staff_id,
             title=self._title(payload) if self._has_title_source(payload) else None,
             description=self._description(payload) if payload else None,
-            start_at=payload.get("start_time"),
-            end_at=payload.get("end_time"),
+            start_at=self._rfc3339(payload.get("start_time")),
+            end_at=self._rfc3339(payload.get("end_time")),
             repair_order_id=payload.get("repair_order_id"),
         )
         return data.model_dump(mode="json", exclude_none=True)
+
+    def _rfc3339(self, value: Any) -> str | None:
+        return rfc3339_datetime_value(value, self.settings.app_local_timezone)
 
     def _title(self, payload: dict[str, Any]) -> str:
         service = payload.get("service_description")
@@ -170,3 +189,240 @@ class ShopWareAppointmentAdapter:
         elif path.endswith("/repair_orders"):
             params["number"] = query
         return params
+
+
+class ShopWareCustomerAdapter:
+    """Customer-specific adapter over the reusable Shop-Ware client."""
+
+    def __init__(self, settings: Settings, client: ShopWareClient) -> None:
+        self.settings = settings
+        self.client = client
+
+    def create(self, payload: ShopWareCustomerCreate) -> dict[str, Any]:
+        if self._is_mock_mode:
+            data = payload.model_dump(mode="json", exclude_none=True)
+            return {"id": 1, "mode": "mock", **data}
+        path = self._format_path(self.settings.shopware_customer_create_path)
+        data = self._with_default_shop(payload).model_dump(mode="json", exclude_none=True)
+        return self.client.request("POST", path, json=data)
+
+    def retrieve(self, customer_id: int) -> dict[str, Any]:
+        if self._is_mock_mode:
+            return {"id": customer_id, "mode": "mock"}
+        path = self._format_path(self.settings.shopware_customer_detail_path, customer_id=customer_id)
+        return self.client.request("GET", path)
+
+    def search(
+        self,
+        query: str | None = None,
+        *,
+        last_name: str | None = None,
+        email: str | None = None,
+        phone_number: str | None = None,
+        customer_type: str | None = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> dict[str, Any]:
+        if self._is_mock_mode:
+            return {"results": [], "mode": "mock"}
+        path = self._format_path(self.settings.shopware_customer_search_path)
+        params: dict[str, Any] = {"page": page, "per_page": per_page}
+        params.update(self._search_filter(query, last_name=last_name, email=email, phone_number=phone_number))
+        if customer_type:
+            params["type"] = customer_type
+        return self.client.request("GET", path, params=params)
+
+    def update(self, customer_id: int, payload: ShopWareCustomerUpdate) -> dict[str, Any]:
+        if self._is_mock_mode:
+            data = payload.model_dump(mode="json", exclude_none=True)
+            return {"id": customer_id, "mode": "mock", **data}
+        path = self._format_path(self.settings.shopware_customer_detail_path, customer_id=customer_id)
+        data = payload.model_dump(mode="json", exclude_none=True)
+        return self.client.request("PUT", path, json=data)
+
+    @property
+    def _is_mock_mode(self) -> bool:
+        return self.settings.integration_test_mode
+
+    def _format_path(self, path: str, customer_id: int | None = None) -> str:
+        if self.settings.shopware_tenant_id is None:
+            raise ExternalServiceNotConfiguredError("SHOPWARE_TENANT_ID must be configured for live Shop-Ware mode.")
+        return path.format(tenant_id=self.settings.shopware_tenant_id, customer_id=customer_id, id=customer_id)
+
+    def _with_default_shop(self, payload: ShopWareCustomerCreate) -> ShopWareCustomerCreate:
+        if payload.shop_id is not None:
+            return payload
+        if self.settings.shopware_default_shop_id is None:
+            raise ExternalServiceNotConfiguredError(
+                "SHOPWARE_DEFAULT_SHOP_ID must be configured to create Shop-Ware customers."
+            )
+        return payload.model_copy(update={"shop_id": self.settings.shopware_default_shop_id})
+
+    def _search_filter(
+        self,
+        query: str | None,
+        *,
+        last_name: str | None,
+        email: str | None,
+        phone_number: str | None,
+    ) -> dict[str, str]:
+        if email:
+            return {"email": email}
+        if phone_number:
+            return {"phone_number": "".join(char for char in phone_number if char.isdigit())}
+        if last_name:
+            return {"last_name": last_name}
+        if not query:
+            return {}
+        if "@" in query:
+            return {"email": query}
+        if any(char.isdigit() for char in query):
+            return {"phone_number": "".join(char for char in query if char.isdigit())}
+        return {"last_name": query}
+
+
+class ShopWareVehicleAdapter:
+    """Vehicle-specific adapter over the reusable Shop-Ware client."""
+
+    def __init__(self, settings: Settings, client: ShopWareClient) -> None:
+        self.settings = settings
+        self.client = client
+
+    def create(self, payload: ShopWareVehicleCreate) -> dict[str, Any]:
+        if self._is_mock_mode:
+            data = payload.model_dump(mode="json", exclude_none=True)
+            return {"id": 1, "mode": "mock", **data}
+        path = self._format_path(self.settings.shopware_vehicle_create_path)
+        data = payload.model_dump(mode="json", exclude_none=True)
+        return self.client.request("POST", path, json=data)
+
+    def retrieve(self, vehicle_id: int) -> dict[str, Any]:
+        if self._is_mock_mode:
+            return {"id": vehicle_id, "mode": "mock"}
+        path = self._format_path(self.settings.shopware_vehicle_detail_path, vehicle_id=vehicle_id)
+        return self.client.request("GET", path)
+
+    def lookup_by_vin(self, vin: str, *, page: int = 1, per_page: int = 30) -> dict[str, Any]:
+        return self.search(vin=vin, page=page, per_page=per_page)
+
+    def search_by_customer(self, customer_id: int, *, page: int = 1, per_page: int = 30) -> dict[str, Any]:
+        return self.search(customer_id=customer_id, page=page, per_page=per_page)
+
+    def search(
+        self,
+        query: str | None = None,
+        *,
+        vin: str | None = None,
+        customer_id: int | None = None,
+        updated_after: str | None = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> dict[str, Any]:
+        if self._is_mock_mode:
+            return {"results": [], "mode": "mock"}
+        path = self._format_path(self.settings.shopware_vehicle_search_path)
+        params: dict[str, Any] = {"page": page, "per_page": per_page}
+        vehicle_vin = vin or query
+        if vehicle_vin:
+            params["vin"] = vehicle_vin
+        if customer_id is not None:
+            params["customer_id"] = customer_id
+        if updated_after:
+            params["updated_after"] = updated_after
+        return self.client.request("GET", path, params=params)
+
+    def update(self, vehicle_id: int, payload: ShopWareVehicleUpdate) -> dict[str, Any]:
+        if self._is_mock_mode:
+            data = payload.model_dump(mode="json", exclude_none=True)
+            return {"id": vehicle_id, "mode": "mock", **data}
+        path = self._format_path(self.settings.shopware_vehicle_detail_path, vehicle_id=vehicle_id)
+        data = payload.model_dump(mode="json", exclude_none=True)
+        return self.client.request("PUT", path, json=data)
+
+    @property
+    def _is_mock_mode(self) -> bool:
+        return self.settings.integration_test_mode
+
+    def _format_path(self, path: str, vehicle_id: int | None = None) -> str:
+        if self.settings.shopware_tenant_id is None:
+            raise ExternalServiceNotConfiguredError("SHOPWARE_TENANT_ID must be configured for live Shop-Ware mode.")
+        return path.format(tenant_id=self.settings.shopware_tenant_id, vehicle_id=vehicle_id, id=vehicle_id)
+
+
+class ShopWareRepairOrderAdapter:
+    """Repair-order-specific adapter over the reusable Shop-Ware client."""
+
+    def __init__(self, settings: Settings, client: ShopWareClient) -> None:
+        self.settings = settings
+        self.client = client
+
+    def create(self, payload: ShopWareRepairOrderCreate) -> dict[str, Any]:
+        if self._is_mock_mode:
+            data = payload.model_dump(mode="json", exclude_none=True)
+            return {"id": 1, "number": 1, "state": "estimate", "mode": "mock", **data}
+        path = self._format_path(self.settings.shopware_repair_order_create_path)
+        data = payload.model_dump(mode="json", exclude_none=True)
+        return self.client.request("POST", path, json=data)
+
+    def retrieve(self, repair_order_id: int, *, associations: list[str] | None = None) -> dict[str, Any]:
+        if self._is_mock_mode:
+            return {"id": repair_order_id, "mode": "mock"}
+        path = self._format_path(self.settings.shopware_repair_order_detail_path, repair_order_id=repair_order_id)
+        params = self._association_params(associations)
+        return self.client.request("GET", path, params=params) if params else self.client.request("GET", path)
+
+    def search(
+        self,
+        *,
+        shop_id: int | None = None,
+        customer_id: int | None = None,
+        vehicle_id: int | None = None,
+        status: str | None = None,
+        number: int | str | None = None,
+        closed_after: str | None = None,
+        technician_id: int | None = None,
+        associations: list[str] | None = None,
+        updated_after: str | None = None,
+        page: int = 1,
+        per_page: int = 30,
+    ) -> dict[str, Any]:
+        if self._is_mock_mode:
+            return {"results": [], "mode": "mock"}
+        path = self._format_path(self.settings.shopware_repair_order_search_path)
+        params: dict[str, Any] = {"page": page, "per_page": per_page}
+        for key, value in {
+            "shop_id": shop_id,
+            "customer_id": customer_id,
+            "vehicle_id": vehicle_id,
+            "status": status,
+            "number": number,
+            "closed_after": closed_after,
+            "technician_id": technician_id,
+            "updated_after": updated_after,
+        }.items():
+            if value is not None:
+                params[key] = value
+        params.update(self._association_params(associations))
+        return self.client.request("GET", path, params=params)
+
+    def update(self, repair_order_id: int, payload: ShopWareRepairOrderUpdate) -> dict[str, Any]:
+        if self._is_mock_mode:
+            data = payload.model_dump(mode="json", exclude_none=True)
+            return {"id": repair_order_id, "mode": "mock", **data}
+        path = self._format_path(self.settings.shopware_repair_order_detail_path, repair_order_id=repair_order_id)
+        data = payload.model_dump(mode="json", exclude_none=True)
+        return self.client.request("PUT", path, json=data)
+
+    @property
+    def _is_mock_mode(self) -> bool:
+        return self.settings.integration_test_mode
+
+    def _format_path(self, path: str, repair_order_id: int | None = None) -> str:
+        if self.settings.shopware_tenant_id is None:
+            raise ExternalServiceNotConfiguredError("SHOPWARE_TENANT_ID must be configured for live Shop-Ware mode.")
+        return path.format(tenant_id=self.settings.shopware_tenant_id, repair_order_id=repair_order_id, id=repair_order_id)
+
+    def _association_params(self, associations: list[str] | None) -> dict[str, Any]:
+        if not associations:
+            return {}
+        return {"associations[]": associations}

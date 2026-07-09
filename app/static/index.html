@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Shop-Ware Integration Test UI</title>
+  <style>
+    body { font-family: Arial; max-width: 800px; margin: 40px auto; }
+    input, textarea, button { width: 100%; margin: 8px 0; padding: 10px; }
+    pre { background: #111; color: #0f0; padding: 15px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Integration Test UI</h1>
+
+  <label>Customer Name</label>
+  <input id="customer_name" value="TEST Customer">
+
+  <label>Phone</label>
+  <input id="phone" value="555-555-5555">
+
+  <label>Vehicle</label>
+  <input id="vehicle" value="2018 Hyundai Sonata">
+
+  <label>Concern</label>
+  <textarea id="concern">Customer states vehicle shudders at light throttle around 20-40 mph.</textarea>
+
+  <button onclick="submitTest()">Submit Test Intake</button>
+
+  <h2>Response</h2>
+  <pre id="output">Waiting...</pre>
+
+  <script>
+    function localIsoWithOffset(date) {
+      const pad = (value) => String(value).padStart(2, "0");
+      const offsetMinutes = -date.getTimezoneOffset();
+      const sign = offsetMinutes >= 0 ? "+" : "-";
+      const abs = Math.abs(offsetMinutes);
+      return (
+        date.getFullYear() + "-" +
+        pad(date.getMonth() + 1) + "-" +
+        pad(date.getDate()) + "T" +
+        pad(date.getHours()) + ":" +
+        pad(date.getMinutes()) + ":" +
+        pad(date.getSeconds()) +
+        sign + pad(Math.floor(abs / 60)) + ":" + pad(abs % 60)
+      );
+    }
+
+    async function submitTest() {
+const start = new Date();
+start.setDate(start.getDate() + 14);
+start.setHours(10, 0, 0, 0);
+const end = new Date(start.getTime() + 60 * 60 * 1000);
+
+const payload = {
+  customer: {
+    full_name: document.getElementById("customer_name").value
+  },
+  phone: document.getElementById("phone").value,
+  vin: "TESTVIN1234567890",
+  concern: document.getElementById("concern").value,
+  requested_appointment: {
+  start_time: localIsoWithOffset(start),
+  end_time: localIsoWithOffset(end),
+  priority: "normal"
+},
+  vehicle: {
+    year: "2018",
+    make: "Hyundai",
+    model: "Sonata"
+  },
+  integration_test_marker: "YNM_TEST_DO_NOT_SERVICE"
+};
+
+      document.getElementById("output").textContent = "Sending...";
+
+      try {
+        const res = await fetch("/api/v1/intake/workflows", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        document.getElementById("output").textContent =
+          JSON.stringify(data, null, 2);
+      } catch (err) {
+        document.getElementById("output").textContent = err.toString();
+      }
+    }
+  </script>
+</body>
+</html>

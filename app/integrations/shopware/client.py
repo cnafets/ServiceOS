@@ -1,4 +1,3 @@
-import logging
 import time
 from typing import Any
 
@@ -6,8 +5,10 @@ import httpx
 
 from app.core.config import Settings
 from app.core.exceptions import ExternalServiceError, ExternalServiceNotConfiguredError
+from app.core.logging import get_logger
+from app.core.metrics import record_retry, record_shopware_call
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ShopWareClient:
@@ -44,18 +45,24 @@ class ShopWareClient:
 
         for attempt in range(1, attempts + 1):
             try:
-                safe_kwargs = {key: value for key, value in kwargs.items() if key.lower() != "headers"}
-                logger.info("Shop-Ware request attempt=%s method=%s path=%s kwargs=%s", attempt, method, path, safe_kwargs)
+                request_start = time.perf_counter()
+                logger.info(
+                    "Shop-Ware Request Started",
+                    extra={"attempt": attempt, "http_method": method, "endpoint": path},
+                )
                 with self._client() as client:
                     response = client.request(method, path, **kwargs)
-                    body_preview = response.text[:1000] if response.text else ""
+                    duration_ms = round((time.perf_counter() - request_start) * 1000, 2)
+                    record_shopware_call(duration_ms, error=response.status_code >= 400)
                     logger.info(
-                        "Shop-Ware response attempt=%s method=%s path=%s status=%s body=%s",
-                        attempt,
-                        method,
-                        path,
-                        response.status_code,
-                        body_preview,
+                        "Shop-Ware Request Completed",
+                        extra={
+                            "attempt": attempt,
+                            "http_method": method,
+                            "endpoint": path,
+                            "status_code": response.status_code,
+                            "duration_ms": duration_ms,
+                        },
                     )
                     response.raise_for_status()
                     if response.content:
@@ -63,15 +70,21 @@ class ShopWareClient:
                     return {}
             except (httpx.TimeoutException, httpx.TransportError, httpx.HTTPStatusError) as exc:
                 last_error = exc
+                duration_ms = round((time.perf_counter() - request_start) * 1000, 2)
+                if not isinstance(exc, httpx.HTTPStatusError):
+                    record_shopware_call(duration_ms, error=True)
                 logger.warning(
-                    "Shop-Ware request failed attempt=%s/%s method=%s path=%s error=%s",
-                    attempt,
-                    attempts,
-                    method,
-                    path,
-                    exc,
+                    "Shop-Ware Request Failed",
+                    extra={
+                        "attempt": attempt,
+                        "max_attempts": attempts,
+                        "http_method": method,
+                        "endpoint": path,
+                        "error_type": type(exc).__name__,
+                    },
                 )
                 if attempt < attempts:
+                    record_retry()
                     time.sleep(self.settings.shopware_retry_backoff_seconds * attempt)
 
         raise ExternalServiceError(f"Shop-Ware API request failed after {attempts} attempt(s): {self._format_error(last_error)}")

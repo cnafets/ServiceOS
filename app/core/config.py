@@ -9,11 +9,15 @@ class Settings(BaseSettings):
 
     app_name: str = "Your New Mechanic Automation"
     app_env: str = "local"
+    app_local_timezone: str = "America/New_York"
     log_level: str = "INFO"
+    log_format: str = "text"
+    integration_test_mode: bool = False
+    idempotency_ttl_seconds: int = 86400
     database_url: str = "sqlite:///./ynm_automation.db"
 
     shopware_base_url: str | None = None
-    shopware_mode: str = "mock"
+    shopware_mode: str = "live"
     shopware_api_partner_id: str | None = Field(default=None, repr=False)
     shopware_api_secret: str | None = Field(default=None, repr=False)
     shopware_tenant_id: int | None = None
@@ -31,18 +35,33 @@ class Settings(BaseSettings):
     shopware_appointment_update_path: str = "/api/v1/tenants/{tenant_id}/appointments/{appointment_id}"
     shopware_appointment_cancel_path: str = "/api/v1/tenants/{tenant_id}/appointments/{appointment_id}"
     shopware_customer_search_path: str = "/api/v1/tenants/{tenant_id}/customers"
+    shopware_customer_create_path: str = "/api/v1/tenants/{tenant_id}/customers"
+    shopware_customer_detail_path: str = "/api/v1/tenants/{tenant_id}/customers/{customer_id}"
     shopware_vehicle_search_path: str = "/api/v1/tenants/{tenant_id}/vehicles"
+    shopware_vehicle_create_path: str = "/api/v1/tenants/{tenant_id}/vehicles"
+    shopware_vehicle_detail_path: str = "/api/v1/tenants/{tenant_id}/vehicles/{vehicle_id}"
     shopware_repair_order_search_path: str = "/api/v1/tenants/{tenant_id}/repair_orders"
+    shopware_repair_order_create_path: str = "/api/v1/tenants/{tenant_id}/repair_orders"
+    shopware_repair_order_detail_path: str = "/api/v1/tenants/{tenant_id}/repair_orders/{repair_order_id}"
     shopware_appointment_id_field: str = "id"
 
     @property
     def shopware_configured(self) -> bool:
-        return self.shopware_mode == "mock" or bool(
-            self.shopware_base_url
-            and self.shopware_api_partner_id
-            and self.shopware_api_secret
-            and self.shopware_tenant_id
-        )
+        return self.shopware_mode_name == "mock" or not self.missing_shopware_live_settings()
+
+    @property
+    def shopware_mode_name(self) -> str:
+        return "mock" if self.integration_test_mode else "live"
+
+    def missing_shopware_live_settings(self) -> list[str]:
+        required = {
+            "SHOPWARE_BASE_URL": self.shopware_base_url,
+            "SHOPWARE_API_PARTNER_ID": self.shopware_api_partner_id,
+            "SHOPWARE_API_SECRET": self.shopware_api_secret,
+            "SHOPWARE_TENANT_ID": self.shopware_tenant_id,
+            "SHOPWARE_DEFAULT_SHOP_ID": self.shopware_default_shop_id,
+        }
+        return [name for name, value in required.items() if not value]
 
     @field_validator(
         "shopware_api_partner_id",

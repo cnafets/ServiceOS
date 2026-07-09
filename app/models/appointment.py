@@ -24,6 +24,7 @@ class Appointment(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     shopware_appointment_id: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
+    repair_order_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     customer_name: Mapped[str] = mapped_column(String(255))
     customer_phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     customer_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
