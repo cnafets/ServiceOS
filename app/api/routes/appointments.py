@@ -1,9 +1,8 @@
-import logging
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import SchedulingConflictError
+from app.core.logging import get_logger
 from app.db.session import get_db
 from app.integrations.shopware.adapter import ShopWareAppointmentAdapter
 from app.integrations.shopware.dependencies import get_shopware_appointment_adapter
@@ -15,7 +14,7 @@ from app.schemas.appointment import (
 )
 from app.services.appointments import AppointmentService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 router = APIRouter(prefix="/appointments", tags=["appointments"])
 
 

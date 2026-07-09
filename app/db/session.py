@@ -18,6 +18,7 @@ class Base(DeclarativeBase):
 
 def create_db_and_tables() -> None:
     from app.models.appointment import Appointment  # noqa: F401
+    from app.models.idempotency import IdempotencyRecord  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _add_missing_sqlite_columns()
@@ -45,6 +46,7 @@ def _add_missing_sqlite_columns() -> None:
         "sync_error": "TEXT",
         "sync_attempts": "INTEGER DEFAULT 0 NOT NULL",
         "last_sync_at": "DATETIME",
+        "repair_order_id": "INTEGER",
     }
     with engine.begin() as connection:
         for column_name, ddl in required_columns.items():

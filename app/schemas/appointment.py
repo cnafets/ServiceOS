@@ -6,6 +6,7 @@ from app.models.appointment import AppointmentStatus, SyncStatus
 
 
 class AppointmentBase(BaseModel):
+    repair_order_id: int | None = None
     customer_name: str = Field(min_length=1, max_length=255)
     customer_phone: str | None = None
     customer_email: EmailStr | None = None
