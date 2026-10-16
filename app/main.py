@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 
 from fastapi.staticfiles import StaticFiles
-from app.api.routes import appointments, health, intake, shopware
+from app.api.routes import appointments, health, intake, shopware, quo_webhooks
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.core.middleware import request_observability_middleware
@@ -23,6 +23,7 @@ def create_app() -> FastAPI:
     app.include_router(appointments.router, prefix="/api/v1")
     app.include_router(shopware.router, prefix="/api/v1")
     app.include_router(intake.router, prefix="/api/v1")
+    app.include_router(quo_webhooks.router, prefix="/api/v1")
 
     app.mount("/", StaticFiles(directory="app/static", html=True), name="static")
     
