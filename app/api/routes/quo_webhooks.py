@@ -7,7 +7,11 @@ import json
 import os
 import time
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.models.quo_webhook_event import QuoWebhookEvent
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -38,7 +42,7 @@ def verify_signature(body: bytes, headers, secret: str, now: int | None = None) 
 
 
 @router.post("/quo")
-async def receive_quo_webhook(request: Request):
+async def receive_quo_webhook(request: Request, db: Session = Depends(get_db)):
     secret = os.environ.get("QUO_WEBHOOK_SIGNING_SECRET", "")
     raw = await request.body()
     if len(raw) > 1024 * 1024:
@@ -51,6 +55,13 @@ async def receive_quo_webhook(request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON")
     if not isinstance(event, dict) or not isinstance(event.get("type"), str) or not isinstance(event.get("id"), str):
         raise HTTPException(status_code=422, detail="Invalid event envelope")
+    if len(event['id']) > 128 or len(event['type']) > 100:
+        raise HTTPException(status_code=422, detail='Event fields too long')
+    db.add(QuoWebhookEvent(event_id=event['id'], event_type=event['type'], payload=raw.decode('utf-8'), status='pending'))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
     # Deliberately no customer replies, estimates, bookings or sensitive payload logs.
     # Next phase: durable event inbox + idempotent worker + human-takeover checks.
     return {"received": True, "event_id": event["id"], "processing": "disabled"}
