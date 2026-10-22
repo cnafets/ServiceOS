@@ -20,6 +20,8 @@ def create_db_and_tables() -> None:
     from app.models.appointment import Appointment  # noqa: F401
     from app.models.idempotency import IdempotencyRecord  # noqa: F401
 
+    from app.models.quo_webhook_event import QuoWebhookEvent  # noqa: F401
+
     Base.metadata.create_all(bind=engine)
     _add_missing_sqlite_columns()
 
